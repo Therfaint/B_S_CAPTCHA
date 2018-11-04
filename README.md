@@ -1,11 +1,14 @@
-# puppeteerDemo
+# B(Break)_S(Slider)_CAPTCHA
 
-利用puppeteer破解极验滑动验证，https://juejin.im/post/5a902e76f265da4e7832b2fb?utm_source=gold_browser_extension
+利用puppeteer破解滑动验证码
+> https://www.jianshu.com/p/ce1e0b37f05a
 
-npm i
+Steps: </br>
+> npm install 
 
-填写前端网的账号密码
+Before run it, please rewrite the function `getBtnPosition` in `run.js`, 'cause the return value is constant.
 
-node run
+> node run
+
 
 
