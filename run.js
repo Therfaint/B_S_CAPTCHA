@@ -1,166 +1,299 @@
 const puppeteer = require('puppeteer');
 const devices = require('puppeteer/DeviceDescriptors');
 const iPhone = devices['iPhone 6 Plus'];
-let timeout = function (delay) {
-     return new Promise((resolve, reject) => {   
-           setTimeout(() => {   
-                  try {
-                      resolve(1)
-                  } catch (e) {
-                      reject(0)
-                   }
-           }, delay);
-     })
- }
+let timeout = function(delay) {
+   return new Promise((resolve, reject) => {
+      setTimeout(() => {
+         try {
+            resolve(1);
+         } catch (e) {
+            reject(0);
+         }
+      }, delay);
+   }).catch(() => console.log('catch'));
+};
 
- let page = null
- let btn_position = null
- let times = 0 // 执行重新滑动的次数
- const distanceError = [-10,2,3,5] // 距离误差
+let page = null;
+let btn_position = null;
+let times = 0; // 执行重新滑动的次数
+const distanceError = [-10, 2, 3, 5]; // 距离误差
 
- async function run() {
-  const browser = await puppeteer.launch({
-      headless:true //这里我设置成false主要是为了让大家看到效果，设置为true就不会打开浏览器
-  });
-  page = await browser.newPage();
+async function run() {
+   const browser = await puppeteer.launch({
+      headless: false //这里我设置成false主要是为了让大家看到效果，设置为true就不会打开浏览器
+   });
+   page = await browser.newPage();
+   
+   await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', {
+         get: () => false,
+      });
+      
+      Object.defineProperty(navigator, 'plugins', {
+         get: () => [1, 2, 3, 4, 5],
+      });
+      
+      const originalQuery = window.navigator.permissions.query;
+      return window.navigator.permissions.query = (parameters) => (
+          parameters.name === 'notifications' ?
+              Promise.resolve({state: Notification.permission}) :
+              originalQuery(parameters)
+      );
+   });
+   
+   // 1.打开前端页面
+   await page.emulate({
+      viewport: {width: 1280, height: 748, isMobile: false},
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36',
+   });
+   await page.goto('https://xue.tongdun.cn/');
+   await timeout(1000);
+   
+   // 2.打开登录页面
+   page.click('.pull-right.btn-group ul li');
+   await timeout(1000);
+   
+   // 3.输入账号密码
+   page.type('#account', '15968813971');
+   await timeout(500);
+   page.type('#password', 'tianxin19941126');
+   await timeout(1000);
+   
+   // 4.点击验证
+   page.click('#loginBtn');
+   await timeout(1000);
+   
+   while (await page.evaluate(() => {
+      return document.querySelector('.td-pop-slide-identity') ? false : true;
+   })) {
+      page.click('.td-icon-close');
+      await timeout(1500);
+      page.click('#loginBtn');
+      await timeout(500);
+      console.log('looping');
+   }
+   
+   btn_position = await getBtnPosition();
+   
+   await timeout(1000);
+   // console.log(await calculateDistance())
+   
+   // 5.滑动
+   drag(null);
+}
 
-  // 1.打开前端网
-  await page.emulate(iPhone);
-  await page.goto('https://wenku.baidu.com/view/2fe0193816fc700aba68fc10.html?from=search');
-  await timeout(1000);
-  
-  await page.pdf({path: 'page.pdf'});
-  await timeout(1500);
-  page.close()
-
-  // 2.打开登录页面
-  page.click('a[data-type=login]')
-  await timeout(1000);
-
-  // 3.输入账号密码
-  page.type('input[data-type=email]','')
-  await timeout(500);
-  page.type('input[placeholder=密码]','')
-  await timeout(1000);
-  
-  // 4.点击验证
-  page.click('.geetest_radar_tip')
-  await timeout(1000);
-
-  btn_position = await getBtnPosition();
-
-  // 5.滑动
-  drag(null)
- }
-
- /**
-  * 计算按钮需要滑动的距离 
-  * */ 
- async function calculateDistance() {
-  const distance = await page.evaluate(() => {
-
-    // 比较像素,找到缺口的大概位置
-    function compare(document) {
-      const ctx1 = document.querySelector('.geetest_canvas_fullbg'); // 完成图片
-      const ctx2 = document.querySelector('.geetest_canvas_bg');  // 带缺口图片
-      const pixelDifference = 30; // 像素差
-      let res = []; // 保存像素差较大的x坐标
-
+/**
+ * 计算按钮需要滑动的距离
+ * */
+async function calculateDistance() {
+   const distance = await page.evaluate(() => {
+      const ctx = document.querySelector('.td-bg-img'); // 背景图片
+      const pixelDifference = 50; // 像素差 TODO 2.November lower the throttle (basic 60), collect more data then using filter
+      let res = []; // 像素差图 manual calculate the second dimension
       // 对比像素
-      for(let i=57;i<260;i++){
-        for(let j=1;j<160;j++) {
-          const imgData1 = ctx1.getContext("2d").getImageData(1*i,1*j,1,1)
-          const imgData2 = ctx2.getContext("2d").getImageData(1*i,1*j,1,1)
-          const data1 = imgData1.data;
-          const data2 = imgData2.data;
-          const res1=Math.abs(data1[0]-data2[0]);
-          const res2=Math.abs(data1[1]-data2[1]);
-          const res3=Math.abs(data1[2]-data2[2]);
-              if(!(res1 < pixelDifference && res2 < pixelDifference && res3 < pixelDifference)) {
-                if(!res.includes(i)) {
-                  res.push(i);
-                }
-              }  
-        }
+      // yAxis 180 points
+      for (let j = 0; j < 180; j++) {
+         let lastPixel = null;
+         // xAxis 260 points
+         for (let i = 59; i < 320; i++) {
+            const imgData = ctx.getContext('2d').
+                getImageData(1 * i, 1 * j, 1, 1);
+            const data = imgData.data;
+            const r = data[0];
+            const g = data[1];
+            const b = data[2];
+            const currentPixel = {
+               r,
+               g,
+               b,
+            };
+            if (lastPixel) {
+               if (Math.abs(currentPixel.r - lastPixel.r) > pixelDifference &&
+                   Math.abs(currentPixel.g - lastPixel.g) > pixelDifference &&
+                   Math.abs(currentPixel.b - lastPixel.b) > pixelDifference) {
+                  res.push(true);
+               } else {
+                  res.push(false);
+               }
+               lastPixel = currentPixel;
+            } else {
+               lastPixel = currentPixel;
+            }
+         }
       }
-      // 返回像素差最大值跟最小值，经过调试最小值往左小7像素，最大值往左54像素
-      return {min:res[0]-7,max:res[res.length-1]-54}
-    }
-    return compare(document)
-  })
-  return distance;
- }
+      return res;
+   });
+   // origin algorithm
+   // let c = {}, xAxis;
+   // distance.map((val, index)=>{
+   //   if(val === true){
+   //     let x = index % 260;
+   //     if(c.hasOwnProperty(x)){
+   //       c[x] += 1;
+   //     }else{
+   //       c[x] = 0
+   //     }
+   //   }
+   // })
+   // Object.keys(c).map(item=>{
+   //   if(xAxis){
+   //     if(c[item] > c[xAxis]){
+   //       xAxis = item;
+   //     }
+   //   }else{
+   //     xAxis = item;
+   //   }
+   // })
+   // let zleftX = xAxis - 42;
+   // if(c.hasOwnProperty(zleftX) && c[zleftX] >= 10){
+   //   xAxis = zleftX;
+   // }
+   
+   // updated algorithm
+   let c = {}, xAxis = 0;
+   distance.map((val, index) => {
+      if (val === true) {
+         let x = index % 260;
+         if (c.hasOwnProperty(x)) {
+            c[x] += 1;
+         } else {
+            c[x] = 0;
+         }
+      }
+   });
+   let top5 = [];
+   Object.keys(c).map(item => {
+      // TODO 2.November filter data here! maybe useful .. try it out!
+      if (c[item] > 42 || c[item] < 20) {
+         return;
+      }
+      if (top5.length === 0) {
+         top5.push(item);
+      } else {
+         if (top5.length < 5) {
+            if (c[top5[top5.length - 1]] > c[item]) {
+               top5.unshift(item);
+            } else {
+               top5.push(item);
+            }
+         } else {
+            for (let i = 0; i < 5; i++) {
+               if (c[item] >= c[top5[i]]) {
+                  for (let j = 4; j > i; j--) {
+                     top5[j] = top5[j - 1];
+                  }
+                  top5[i] = item;
+                  break;
+               }
+            }
+         }
+      }
+   });
+   for (let ii = 0; ii < 5; ii++) {
+      for (let jj = 0; jj < 5; jj++) {
+         if (Math.abs(top5[ii] - top5[jj]) <= 42 &&
+             Math.abs(top5[ii] - top5[jj]) >= 35) {
+            xAxis = Number(
+                parseInt(top5[ii]) > parseInt(top5[jj]) ? top5[jj] : top5[ii]);// according to the stats, plus one is more accurate
+            break;
+         }
+      }
+   }
+   console.log(JSON.stringify(top5), xAxis);
+   if (xAxis === 0) {
+      if (c[`${top5[0] - 42}`] > 10) {
+         xAxis = top5[0] - 40; // It should be minus 42, but according to the stats, I modify it, too
+      } else {
+         xAxis = top5[0];
+      }
+   }
+   return Number(xAxis) + 59;
+}
 
- /**
-  * 计算滑块位置
+/**
+ * 计算滑块位置
  */
- async function getBtnPosition() {
-  const btn_position = await page.evaluate(() => {
-    const {clientWidth,clientHeight} = document.querySelector('.geetest_popup_ghost')
-    return {btn_left:clientWidth/2-104,btn_top:clientHeight/2+59}
-  })
-  return btn_position;
- }
+async function getBtnPosition() {
+   const btn_position = await page.evaluate(() => {
+      const wrapper = document.querySelector('.td-pop-cnt'),
+          sliderBar = document.querySelector('.td-slide-wrap');
+      const wLeft = wrapper.offsetLeft, wTop = wrapper.offsetTop,
+          sLeft = sliderBar.offsetLeft, sTop = sliderBar.offsetTop;
+      return {btn_left: 500, btn_top: 464, wLeft, wTop};
+   });
+   // TODO calculate position of the slider. PS: I don't know why but I just can't get the right
+   return btn_position;
+}
 
- /**
-  * 尝试滑动按钮
-  * @param distance 滑动距离
-  * */  
- async function tryValidation(distance) {
-  //将距离拆分成两段，模拟正常人的行为
-  const distance1 = distance - 10
-  const distance2 = 10
+/**
+ * 尝试滑动按钮
+ * @param distance 滑动距离
+ * */
+async function tryValidation(distance) {
+   const piece = 10, fragments = {};
+   //将距离拆分成两段，模拟正常人的行为
+   
+   const base = distance / piece;
+   for (let i = 0; i < piece; i = i + 2) {
+      // const increment = Math.floor(Math.random() * 2);
+      fragments[`p${i}`] = {
+         addon: base * (i + 1),
+         steps: Math.floor(Math.random() * 10 + 30),
+      };
+      fragments[`p${i + 1}`] = {
+         addon: base * (i + 2),
+         steps: Math.floor(Math.random() * 10 + 30),
+      };
+      // fragments[`p${i}`] = {addon: base * (i+1), steps: Math.floor(Math.random() * 100 - 20)}
+      // fragments[`p${i+1}`] = {addon: base * (i+2), steps: Math.floor(Math.random() * 100 - 20)}
+   }
+   
+   // drag
+   page.mouse.move(btn_position.btn_left, btn_position.btn_top);
+   page.mouse.down();
+   for (let k in fragments) {
+      page.mouse.move(btn_position.btn_left + fragments[k].addon,
+          btn_position.btn_top, {steps: fragments[k].steps});
+      await timeout(33);
+   }
+   await timeout(800);
+   page.mouse.move(btn_position.btn_left + distance + 9, btn_position.btn_top,
+       {steps: 9}); // over slide
+   await timeout(800);
+   page.mouse.move(btn_position.btn_left + distance, btn_position.btn_top,
+       {steps: 20}); // rollback
+   await timeout(800);
+   page.mouse.up();
+   
+   await timeout(111);
+   
+   // 判断是否验证成功
+   const isSuccess = await page.evaluate(() => {
+      return document.querySelector('.td-pop-slide-msg') &&
+          document.querySelector('.td-pop-slide-msg').innerText;
+   });
+   console.log(isSuccess);
+   return {
+      isSuccess: isSuccess === '验证成功',
+   };
+}
 
-  page.mouse.click(btn_position.btn_left,btn_position.btn_top,{delay:2000})
-  page.mouse.down(btn_position.btn_left,btn_position.btn_top)
-  page.mouse.move(btn_position.btn_left+distance1,btn_position.btn_top,{steps:30})
-  await timeout(800);
-  page.mouse.move(btn_position.btn_left+distance1+distance2,btn_position.btn_top,{steps:20})
-  await timeout(800);
-  page.mouse.up()
-  await timeout(4000);
-  
-  // 判断是否验证成功
-  const isSuccess = await page.evaluate(() => {
-    return document.querySelector('.geetest_success_radar_tip_content') && document.querySelector('.geetest_success_radar_tip_content').innerHTML
-  })
-  await timeout(1000);
-  // 判断是否需要重新计算距离
-  const reDistance = await page.evaluate(() => {
-    return document.querySelector('.geetest_result_content') && document.querySelector('.geetest_result_content').innerHTML
-  })
-  await timeout(1000);
-  return {isSuccess:isSuccess==='验证成功',reDistance:reDistance.includes('怪物吃了拼图')}
- }
+/**
+ * 拖动滑块
+ * @param distance 滑动距离
+ * */
+async function drag() {
+   let distance = await calculateDistance();
+   const result = await tryValidation(distance);
+   // await tryValidation(250);
+   if (result.isSuccess) {
+      //登录
+      console.log('验证成功');
+   } else {
+      console.log('重新计算滑距离录，重新滑动');
+      times = 0;
+      await drag(null);
+   }
+}
 
- /**
-  * 拖动滑块
-  * @param distance 滑动距离
-  * */ 
- async function drag(distance) {
-  distance = distance || await calculateDistance();
-  const result = await tryValidation(distance.min)
-  if(result.isSuccess) {
-    await timeout(1000);
-    //登录
-    console.log('验证成功')
-    page.click('#modal-member-login button')
-  }else if(result.reDistance) {
-    console.log('重新计算滑距离录，重新滑动')
-    times = 0
-    await drag(null)
-  } else {
-    if(distanceError[times]){
-      times ++
-      console.log('重新滑动')
-      await drag({min:distance.max,max:distance.max+distanceError[times]})
-    } else {
-      console.log('滑动失败')
-      times = 0
-      run()
-    }
-  }
- }
-
- run()
-
+run();
